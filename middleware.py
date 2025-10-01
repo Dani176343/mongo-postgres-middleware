@@ -29,8 +29,8 @@ POSTGRES_CONFIG = {
 MONGO_CONFIG = {
     "host": "localhost",
     "port": 27017,
-    "database": "processos360",
-    "collection": "Processos"
+    "database": "processo360",
+    "collection": "processos"
 }
 
 # =================================================================
@@ -279,15 +279,19 @@ def run_etl_process(drdl_data):
                 }.get(table_name)
 
                 if pk_columns:
-                    update_columns_sql = sql.SQL(', ').join(
-                        sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(name), sql.Identifier(name))
-                        for name in sql_names if name not in pk_columns
-                    )
-                    
-                    # Se não houver colunas para atualizar, não faz nada no conflito
-                    on_conflict_sql = "DO NOTHING"
-                    if update_columns_sql.string:
+                    # Filtra as colunas que não são chave primária
+                    update_column_names = [name for name in sql_names if name not in pk_columns]
+
+                    if update_column_names:
+                        # Se há colunas para atualizar, cria o UPDATE
+                        update_columns_sql = sql.SQL(', ').join(
+                            sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(name), sql.Identifier(name))
+                            for name in update_column_names
+                        )
                         on_conflict_sql = sql.SQL("DO UPDATE SET {}").format(update_columns_sql)
+                    else:
+                        # Se não há colunas para atualizar, não faz nada no conflito
+                        on_conflict_sql = sql.SQL("DO NOTHING")
 
                     insert_sql = sql.SQL(
                         "INSERT INTO {table} ({columns}) VALUES ({values_placeholders}) ON CONFLICT ({pk_columns}) {on_conflict}"
