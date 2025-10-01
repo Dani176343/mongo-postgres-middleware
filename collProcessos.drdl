@@ -1,0 +1,139 @@
+schema:
+- db: dbProcessos
+  tables:
+  - table: collProcessos360
+    collection: collProcessos360
+    pipeline: []
+    columns:
+    - Name: _id
+      MongoType: bson.ObjectId
+      SqlName: _id
+      SqlType: objectid
+    - Name: dadosNegocio.pidAlvo
+      MongoType: string
+      SqlName: N_SubProcesso
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.estado
+      MongoType: string
+      SqlName: Estado
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.etapa
+      MongoType: string
+      SqlName: Etapa
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.fase
+      MongoType: string
+      SqlName: Fase
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.localizacao
+      MongoType: string
+      SqlName: Localizacao_Processo
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.num
+      MongoType: string
+      SqlName: procAdministrativo.dadosGerais.num
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.pid
+      MongoType: int
+      SqlName: N_Processo
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.tipoOperacao
+      MongoType: string
+      SqlName: Tipo_Operacao
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.tipoProcedimento
+      MongoType: string
+      SqlName: Tipo_Procedimento
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.tipoProcesso
+      MongoType: string
+      SqlName: Tipo_Processo
+      SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.ultimaAcao
+      MongoType: string
+      SqlName: Acao
+      SqlType: varchar
+    - Name: procAdministrativo.localizacaoOperacao.localizacao.freguesia_J1700
+      MongoType: string
+      SqlName: Freguesia
+      SqlType: varchar
+    - Name: procAdministrativo.localizacaoOperacao.localizacao.localidadePostal_J1400
+      MongoType: string
+      SqlName: Localidade
+      SqlType: varchar
+    - Name: procAdministrativo.localizacaoOperacao.localizacao.lugar_J1100
+      MongoType: string
+      SqlName: Lugar
+      SqlType: varchar
+    - Name: procAdministrativo.requerente.nif
+      MongoType: string
+      SqlName: Nif
+      SqlType: varchar
+    - Name: procAdministrativo.requerente.nome
+      MongoType: string
+      SqlName: Nome
+      SqlType: varchar
+  - table: collProcessos360_lstTitulosEmitidos
+    collection: collProcessos360
+    pipeline:
+    - $unwind:
+        includeArrayIndex: lstTitulosEmitidos_idx
+        path: $lstTitulosEmitidos
+        preserveNullAndEmptyArrays: true
+    columns:
+    - Name: lstTitulosEmitidos.pid
+      MongoType: string
+      SqlName: N_Processo
+      SqlType: varchar
+    - Name: lstTitulosEmitidos.numero
+      MongoType: string
+      SqlName: Numero
+      SqlType: varchar
+    - Name: lstTitulosEmitidos.tipologia
+      MongoType: string
+      SqlName: Tipologia
+      SqlType: varchar
+    - Name: lstTitulosEmitidos.dataEmissao
+      MongoType: string
+      SqlName: Data_Emissao
+      SqlType: varchar
+    - Name: lstTitulosEmitidos.dataTermo
+      MongoType: string
+      SqlName: Data_Fim
+      SqlType: varchar
+    - Name: lstTitulosEmitidos.dataDespacho
+      MongoType: string
+      SqlName: Data_Despacho
+      SqlType: varchar
+  - table: collProcessos360_procAdministrativo_lstDecisoes
+    collection: collProcessos360
+    pipeline:
+    - $unwind:
+        includeArrayIndex: procAdministrativo.lstDecisoes_idx
+        path: $procAdministrativo.lstDecisoes
+        preserveNullAndEmptyArrays: true
+    columns:
+    - Name: _id
+      MongoType: bson.ObjectId
+      SqlName: _id
+      SqlType: objectid
+    - Name: procAdministrativo.lstDecisoes.comentario
+      MongoType: string
+      SqlName: Comentario
+      SqlType: varchar
+    - Name: procAdministrativo.lstDecisoes.data
+      MongoType: string
+      SqlName: Data
+      SqlType: varchar
+    - Name: procAdministrativo.lstDecisoes.decisao
+      MongoType: string
+      SqlName: Decisao
+      SqlType: varchar
+    - Name: procAdministrativo.lstDecisoes.userid
+      MongoType: string
+      SqlName: Id_User
+      SqlType: varchar
+    - Name: procAdministrativo.lstDecisoes_idx
+      MongoType: int
+      SqlName: idx
+      SqlType: int
