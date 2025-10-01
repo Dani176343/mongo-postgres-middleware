@@ -65,14 +65,14 @@ def create_postgres_schema(drdl_data):
 
                 column_defs = []
 
+                # Add serial PK for ALL child tables (everything except the main table)
+                if table_name != 'collProcessos360':
+                    column_defs.append(sql.SQL("id SERIAL PRIMARY KEY"))
+
+                # Define PK only for the main table
                 primary_key_cols = []
                 if table_name == 'collProcessos360':
                     primary_key_cols = ['_id']
-                elif table_name == "collProcessos360_lstTitulosEmitidos":
-                    primary_key_cols = ['N_Processo']
-                elif table_name == 'collProcessos360_procAdministrativo_lstDecisoes':
-                    primary_key_cols = ['_id']
-
 
                 for col in columns:
                     sql_name = col['SqlName']
@@ -87,6 +87,7 @@ def create_postgres_schema(drdl_data):
                     col_identifier = sql.Identifier(sql_name)
                     col_def = sql.SQL("{} {}").format(col_identifier, sql.SQL(sql_type))
 
+                    # Only enforce NOT NULL for actual PK columns (main table _id)
                     if sql_name in primary_key_cols:
                         col_def = sql.SQL("{} NOT NULL").format(col_def)
 
@@ -112,8 +113,6 @@ def create_postgres_schema(drdl_data):
                     print(f" [OK] Tabela \"{table_name}\" criada/verificada.")
                 except Exception as e:
                     print(f" [ERRO] Falha ao criar a tabela \"{table_name}\": {e}")
-
-        # ... (rest of the function remains the same)
 
         print("\n--- Criação de esquema concluída. ---")
         return True
@@ -229,7 +228,6 @@ def run_etl_process(drdl_data):
                         for doc in batch_docs:
                             nested_items = get_nested_value(doc, nested_path)
 
-                            # Helper: build a row for a given item (or None for placeholder)
                             def build_row(item, idx_val):
                                 row_values_local = []
                                 for col_def in columns:
@@ -237,7 +235,6 @@ def run_etl_process(drdl_data):
                                     mongo_path = col_def.get('Name', col_def['SqlName'])
 
                                     if mongo_path == '_id':
-                                        # use parent _id
                                         val = doc.get('_id')
                                     elif col_def['SqlName'] == 'idx':
                                         val = idx_val
@@ -246,14 +243,11 @@ def run_etl_process(drdl_data):
                                             if not '.' in mongo_path:
                                                 val = doc.get(mongo_path)
                                             else:
-                                                # extract last field from item for paths like "lstTitulosEmitidos.numero"
                                                 item_field = mongo_path.split('.')[-1]
                                                 if isinstance(item, dict):
                                                     val = item.get(item_field)
                                         else:
-                                            # Placeholder row: set only identifiers depending on table
                                             if table_name == 'collProcessos360_lstTitulosEmitidos' and col_def['SqlName'] == 'N_Processo':
-                                                # fallback to parent pid
                                                 val = get_nested_value(doc, 'procAdministrativo.dadosGerais.pid')
                                             elif table_name == 'collProcessos360_procAdministrativo_lstDecisoes' and mongo_path == '_id':
                                                 val = doc.get('_id')
@@ -263,24 +257,21 @@ def run_etl_process(drdl_data):
                                     row_values_local.append(val)
                                 return tuple(row_values_local)
 
-                            # If we have a proper list with items, process normally
                             if isinstance(nested_items, list) and len(nested_items) > 0:
                                 for idx, item in enumerate(nested_items):
                                     data_to_insert.append(build_row(item, idx))
                             else:
-                                # Missing or empty list: insert a single placeholder row with identifiers only
+                                # Always ensure at least one placeholder row in sub tables
                                 placeholder_idx = 0 if table_name == 'collProcessos360_procAdministrativo_lstDecisoes' else None
                                 data_to_insert.append(build_row(None, placeholder_idx))
 
-                    # 4. CARREGAMENTO (PostgreSQL)
                     if not data_to_insert:
                         print(" [INFO] Nenhum dado para inserir.")
                         continue
 
                     values_placeholders = sql.SQL(', ').join(sql.SQL('%s') for _ in sql_names)
                     pk_columns = {
-                        'collProcessos360': ['_id'],
-                        'collProcessos360_procAdministrativo_lstDecisoes': ['_id']
+                        'collProcessos360': ['_id']
                     }.get(table_name)
 
                     if pk_columns:
@@ -314,7 +305,6 @@ def run_etl_process(drdl_data):
                         )
 
                     rows_count = 0
-                    # Inserção 1 a 1, com logs por linha
                     id_field_map = {
                         'collProcessos360': '_id',
                         'collProcessos360_procAdministrativo_lstDecisoes': '_id',
@@ -333,10 +323,9 @@ def run_etl_process(drdl_data):
                         print(f"   -> Inserido/Atualizado em {table_name}: {id_field}={identifier_val}")
                     print(f" [SUCESSO] Inseridas/Atualizadas {rows_count} linhas em \"{table_name}\"")
 
-            # fim processamento por tabelas do lote atual
             pg_conn.commit()
             total_processed += len(batch_docs)
-            last_id = batch_docs[-1]['_id']  # como está ordenado desc, o último é o menor _id do lote
+            last_id = batch_docs[-1]['_id']
 
         print(f"\n[INFO] Processamento paginado concluído. Total de documentos processados: {total_processed}")
 
