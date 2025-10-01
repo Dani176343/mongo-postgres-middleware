@@ -27,10 +27,10 @@ POSTGRES_CONFIG = {
 
 # --- Conexão MongoDB ---
 MONGO_CONFIG = {
-    "host": "localhost",
+    "host": "10.101.161.51",
     "port": 27017,
-    "database": "processo360",
-    "collection": "processos"
+    "database": "dbProcessos",
+    "collection": "collProcessos360"
 }
 
 # =================================================================
@@ -174,8 +174,10 @@ def run_etl_process(drdl_data):
         mongo_collection = mongo_db[MONGO_CONFIG["collection"]]
 
         print(f"A extrair dados da coleção: {MONGO_CONFIG['collection']}")
-        all_mongo_docs = list(mongo_collection.find())
-        print(f"-> {len(all_mongo_docs)} documentos encontrados.")
+        query = {"procAdministrativo.dadosGerais.areaTematica": "Urbanismo"}
+        cursor = mongo_collection.find(query).sort([('_id', -1)]).limit(10)
+        all_mongo_docs = list(cursor)
+        print(f"-> {len(all_mongo_docs)} documentos encontrados (filtrados por areaTematica='Urbanismo', últimos 10).")
 
         for schema_def in drdl_data.get('schema', []):
             for table_def in schema_def.get('tables', []):
@@ -215,29 +217,48 @@ def run_etl_process(drdl_data):
                     for doc in all_mongo_docs:
                         nested_items = get_nested_value(doc, nested_path)
 
-                        if not isinstance(nested_items, list):
-                            continue
-
-                        for idx, item in enumerate(nested_items):
-                            row_values = []
+                        # Helper: build a row for a given item (or None for placeholder)
+                        def build_row(item, idx_val):
+                            row_values_local = []
                             for col_def in columns:
                                 val = None
                                 mongo_path = col_def.get('Name', col_def['SqlName'])
 
-                                if not '.' in mongo_path or mongo_path == '_id':
-                                    val = doc.get(mongo_path)
+                                if mongo_path == '_id':
+                                    # use parent _id
+                                    val = doc.get('_id')
                                 elif col_def['SqlName'] == 'idx':
-                                    val = idx
+                                    val = idx_val
                                 else:
-                                    item_field = mongo_path.split('.')[-1]
-                                    if isinstance(item, dict):
-                                        val = item.get(item_field)
+                                    if item is not None:
+                                        if not '.' in mongo_path:
+                                            val = doc.get(mongo_path)
+                                        else:
+                                            # extract last field from item for paths like "lstTitulosEmitidos.numero"
+                                            item_field = mongo_path.split('.')[-1]
+                                            if isinstance(item, dict):
+                                                val = item.get(item_field)
+                                    else:
+                                        # Placeholder row: set only identifiers depending on table
+                                        if table_name == 'collProcessos360_lstTitulosEmitidos' and col_def['SqlName'] == 'N_Processo':
+                                            # fallback to parent pid
+                                            val = get_nested_value(doc, 'procAdministrativo.dadosGerais.pid')
+                                        elif table_name == 'collProcessos360_procAdministrativo_lstDecisoes' and mongo_path == '_id':
+                                            val = doc.get('_id')
 
-                                if val and col_def['MongoType'] == 'bson.ObjectId':
+                                if val is not None and col_def['MongoType'] == 'bson.ObjectId':
                                     val = str(val)
+                                row_values_local.append(val)
+                            return tuple(row_values_local)
 
-                                row_values.append(val)
-                            data_to_insert.append(tuple(row_values))
+                        # If we have a proper list with items, process normally
+                        if isinstance(nested_items, list) and len(nested_items) > 0:
+                            for idx, item in enumerate(nested_items):
+                                data_to_insert.append(build_row(item, idx))
+                        else:
+                            # Missing or empty list: insert a single placeholder row with identifiers only
+                            placeholder_idx = 0 if table_name == 'collProcessos360_procAdministrativo_lstDecisoes' else None
+                            data_to_insert.append(build_row(None, placeholder_idx))
 
                 # 4. CARREGAMENTO (PostgreSQL)
                 if not data_to_insert:
@@ -247,7 +268,7 @@ def run_etl_process(drdl_data):
                 values_placeholders = sql.SQL(', ').join(sql.SQL('%s') for _ in sql_names)
                 pk_columns = {
                     'collProcessos360': ['_id'],
-                    'collProcessos360_procAdministrativo_lstDecisoes': ['_id', 'idx']
+                    'collProcessos360_procAdministrativo_lstDecisoes': ['_id']
                 }.get(table_name)
 
                 if pk_columns:
