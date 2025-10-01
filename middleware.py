@@ -174,135 +174,171 @@ def run_etl_process(drdl_data):
         mongo_collection = mongo_db[MONGO_CONFIG["collection"]]
 
         print(f"A extrair dados da coleção: {MONGO_CONFIG['collection']}")
-        query = {"procAdministrativo.dadosGerais.areaTematica": "Urbanismo"}
-        cursor = mongo_collection.find(query).sort([('_id', -1)]).limit(10)
-        all_mongo_docs = list(cursor)
-        print(f"-> {len(all_mongo_docs)} documentos encontrados (filtrados por areaTematica='Urbanismo', últimos 10).")
+        base_query = {"procAdministrativo.dadosGerais.areaTematica": "Urbanismo"}
+        BATCH_SIZE = int(os.getenv('MONGO_BATCH_SIZE', '200'))
+        print(f"-> Consulta paginada por lotes de {BATCH_SIZE} documentos (filtrados por areaTematica='Urbanismo').")
 
-        for schema_def in drdl_data.get('schema', []):
-            for table_def in schema_def.get('tables', []):
-                table_name = table_def['table']
-                columns = table_def['columns']
-                sql_names = [col['SqlName'] for col in columns]
+        last_id = None
+        total_processed = 0
+        while True:
+            query = dict(base_query)
+            if last_id is not None:
+                query.update({"_id": {"$lt": last_id}})
 
-                print(f"\nProcessando dados para a tabela: {table_name}")
+            batch_docs = list(mongo_collection.find(query).sort([('_id', -1)]).limit(BATCH_SIZE))
+            if not batch_docs:
+                break
 
-                data_to_insert = []
+            print(f"\n[LOTE] A processar {len(batch_docs)} documentos (acumulado={total_processed + len(batch_docs)})")
 
-                # Lógica para extrair dados para a tabela principal
-                if table_name == 'collProcessos360':
-                    for doc in all_mongo_docs:
-                        row_values = []
-                        for col_def in columns:
-                            mongo_path = col_def.get('Name', col_def['SqlName'])
-                            val = get_nested_value(doc, mongo_path)
+            for schema_def in drdl_data.get('schema', []):
+                for table_def in schema_def.get('tables', []):
+                    table_name = table_def['table']
+                    columns = table_def['columns']
+                    sql_names = [col['SqlName'] for col in columns]
 
-                            if col_def['MongoType'] == 'bson.ObjectId' and val:
-                                val = str(val)
-                            if col_def['SqlName'] == 'N_Processo' and val is not None:
-                                val = str(val)
-                            row_values.append(val)
-                        data_to_insert.append(tuple(row_values))
+                    print(f"\nProcessando dados para a tabela: {table_name}")
 
-                # Lógica para extrair dados para tabelas aninhadas
-                else:
-                    nested_field_name = table_name.replace('collProcessos360_', '')
+                    data_to_insert = []
 
-                    if '_' in nested_field_name:
-                        parts = nested_field_name.split('_')
-                        nested_path = '.'.join(parts)
-                    else:
-                        nested_path = nested_field_name
-
-                    for doc in all_mongo_docs:
-                        nested_items = get_nested_value(doc, nested_path)
-
-                        # Helper: build a row for a given item (or None for placeholder)
-                        def build_row(item, idx_val):
-                            row_values_local = []
+                    # Lógica para extrair dados para a tabela principal
+                    if table_name == 'collProcessos360':
+                        for doc in batch_docs:
+                            row_values = []
                             for col_def in columns:
-                                val = None
                                 mongo_path = col_def.get('Name', col_def['SqlName'])
+                                val = get_nested_value(doc, mongo_path)
 
-                                if mongo_path == '_id':
-                                    # use parent _id
-                                    val = doc.get('_id')
-                                elif col_def['SqlName'] == 'idx':
-                                    val = idx_val
-                                else:
-                                    if item is not None:
-                                        if not '.' in mongo_path:
-                                            val = doc.get(mongo_path)
-                                        else:
-                                            # extract last field from item for paths like "lstTitulosEmitidos.numero"
-                                            item_field = mongo_path.split('.')[-1]
-                                            if isinstance(item, dict):
-                                                val = item.get(item_field)
-                                    else:
-                                        # Placeholder row: set only identifiers depending on table
-                                        if table_name == 'collProcessos360_lstTitulosEmitidos' and col_def['SqlName'] == 'N_Processo':
-                                            # fallback to parent pid
-                                            val = get_nested_value(doc, 'procAdministrativo.dadosGerais.pid')
-                                        elif table_name == 'collProcessos360_procAdministrativo_lstDecisoes' and mongo_path == '_id':
-                                            val = doc.get('_id')
-
-                                if val is not None and col_def['MongoType'] == 'bson.ObjectId':
+                                if col_def['MongoType'] == 'bson.ObjectId' and val:
                                     val = str(val)
-                                row_values_local.append(val)
-                            return tuple(row_values_local)
+                                if col_def['SqlName'] == 'N_Processo' and val is not None:
+                                    val = str(val)
+                                row_values.append(val)
+                            data_to_insert.append(tuple(row_values))
 
-                        # If we have a proper list with items, process normally
-                        if isinstance(nested_items, list) and len(nested_items) > 0:
-                            for idx, item in enumerate(nested_items):
-                                data_to_insert.append(build_row(item, idx))
-                        else:
-                            # Missing or empty list: insert a single placeholder row with identifiers only
-                            placeholder_idx = 0 if table_name == 'collProcessos360_procAdministrativo_lstDecisoes' else None
-                            data_to_insert.append(build_row(None, placeholder_idx))
-
-                # 4. CARREGAMENTO (PostgreSQL)
-                if not data_to_insert:
-                    print(" [INFO] Nenhum dado para inserir.")
-                    continue
-
-                values_placeholders = sql.SQL(', ').join(sql.SQL('%s') for _ in sql_names)
-                pk_columns = {
-                    'collProcessos360': ['_id'],
-                    'collProcessos360_procAdministrativo_lstDecisoes': ['_id']
-                }.get(table_name)
-
-                if pk_columns:
-                    update_column_names = [name for name in sql_names if name not in pk_columns]
-                    if update_column_names:
-                        update_columns_sql = sql.SQL(', ').join(
-                            sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(name), sql.Identifier(name))
-                            for name in update_column_names
-                        )
-                        on_conflict_sql = sql.SQL("DO UPDATE SET {}").format(update_columns_sql)
+                    # Lógica para extrair dados para tabelas aninhadas
                     else:
-                        on_conflict_sql = sql.SQL("DO NOTHING")
+                        nested_field_name = table_name.replace('collProcessos360_', '')
 
-                    insert_sql = sql.SQL(
-                        "INSERT INTO {table} ({columns}) VALUES ({values_placeholders}) ON CONFLICT ({pk_columns}) {on_conflict}"
-                    ).format(
-                        table=sql.Identifier(table_name),
-                        columns=sql.SQL(', ').join(map(sql.Identifier, sql_names)),
-                        values_placeholders=values_placeholders,
-                        pk_columns=sql.SQL(', ').join(map(sql.Identifier, pk_columns)),
-                        on_conflict=on_conflict_sql
-                    )
-                else:
-                    pg_cursor.execute(sql.SQL("TRUNCATE TABLE {table} RESTART IDENTITY").format(table=sql.Identifier(table_name)))
-                    insert_sql = sql.SQL(
-                        "INSERT INTO {table} ({columns}) VALUES ({values_placeholders})"
-                    ).format(
-                        table=sql.Identifier(table_name),
-                        columns=sql.SQL(', ').join(map(sql.Identifier, sql_names)),
-                        values_placeholders=values_placeholders
-                    )
+                        if '_' in nested_field_name:
+                            parts = nested_field_name.split('_')
+                            nested_path = '.'.join(parts)
+                        else:
+                            nested_path = nested_field_name
 
-                pg_cursor.executemany(insert_sql, data_to_insert)
-                print(f" [SUCESSO] Inseridas/Atualizadas {len(data_to_insert)} linhas em \"{table_name}\"")
+                        for doc in batch_docs:
+                            nested_items = get_nested_value(doc, nested_path)
+
+                            # Helper: build a row for a given item (or None for placeholder)
+                            def build_row(item, idx_val):
+                                row_values_local = []
+                                for col_def in columns:
+                                    val = None
+                                    mongo_path = col_def.get('Name', col_def['SqlName'])
+
+                                    if mongo_path == '_id':
+                                        # use parent _id
+                                        val = doc.get('_id')
+                                    elif col_def['SqlName'] == 'idx':
+                                        val = idx_val
+                                    else:
+                                        if item is not None:
+                                            if not '.' in mongo_path:
+                                                val = doc.get(mongo_path)
+                                            else:
+                                                # extract last field from item for paths like "lstTitulosEmitidos.numero"
+                                                item_field = mongo_path.split('.')[-1]
+                                                if isinstance(item, dict):
+                                                    val = item.get(item_field)
+                                        else:
+                                            # Placeholder row: set only identifiers depending on table
+                                            if table_name == 'collProcessos360_lstTitulosEmitidos' and col_def['SqlName'] == 'N_Processo':
+                                                # fallback to parent pid
+                                                val = get_nested_value(doc, 'procAdministrativo.dadosGerais.pid')
+                                            elif table_name == 'collProcessos360_procAdministrativo_lstDecisoes' and mongo_path == '_id':
+                                                val = doc.get('_id')
+
+                                    if val is not None and col_def['MongoType'] == 'bson.ObjectId':
+                                        val = str(val)
+                                    row_values_local.append(val)
+                                return tuple(row_values_local)
+
+                            # If we have a proper list with items, process normally
+                            if isinstance(nested_items, list) and len(nested_items) > 0:
+                                for idx, item in enumerate(nested_items):
+                                    data_to_insert.append(build_row(item, idx))
+                            else:
+                                # Missing or empty list: insert a single placeholder row with identifiers only
+                                placeholder_idx = 0 if table_name == 'collProcessos360_procAdministrativo_lstDecisoes' else None
+                                data_to_insert.append(build_row(None, placeholder_idx))
+
+                    # 4. CARREGAMENTO (PostgreSQL)
+                    if not data_to_insert:
+                        print(" [INFO] Nenhum dado para inserir.")
+                        continue
+
+                    values_placeholders = sql.SQL(', ').join(sql.SQL('%s') for _ in sql_names)
+                    pk_columns = {
+                        'collProcessos360': ['_id'],
+                        'collProcessos360_procAdministrativo_lstDecisoes': ['_id']
+                    }.get(table_name)
+
+                    if pk_columns:
+                        update_column_names = [name for name in sql_names if name not in pk_columns]
+                        if update_column_names:
+                            update_columns_sql = sql.SQL(', ').join(
+                                sql.SQL('{}=EXCLUDED.{}').format(sql.Identifier(name), sql.Identifier(name))
+                                for name in update_column_names
+                            )
+                            on_conflict_sql = sql.SQL("DO UPDATE SET {}").format(update_columns_sql)
+                        else:
+                            on_conflict_sql = sql.SQL("DO NOTHING")
+
+                        insert_sql = sql.SQL(
+                            "INSERT INTO {table} ({columns}) VALUES ({values_placeholders}) ON CONFLICT ({pk_columns}) {on_conflict}"
+                        ).format(
+                            table=sql.Identifier(table_name),
+                            columns=sql.SQL(', ').join(map(sql.Identifier, sql_names)),
+                            values_placeholders=values_placeholders,
+                            pk_columns=sql.SQL(', ').join(map(sql.Identifier, pk_columns)),
+                            on_conflict=on_conflict_sql
+                        )
+                    else:
+                        pg_cursor.execute(sql.SQL("TRUNCATE TABLE {table} RESTART IDENTITY").format(table=sql.Identifier(table_name)))
+                        insert_sql = sql.SQL(
+                            "INSERT INTO {table} ({columns}) VALUES ({values_placeholders})"
+                        ).format(
+                            table=sql.Identifier(table_name),
+                            columns=sql.SQL(', ').join(map(sql.Identifier, sql_names)),
+                            values_placeholders=values_placeholders
+                        )
+
+                    rows_count = 0
+                    # Inserção 1 a 1, com logs por linha
+                    id_field_map = {
+                        'collProcessos360': '_id',
+                        'collProcessos360_procAdministrativo_lstDecisoes': '_id',
+                        'collProcessos360_lstTitulosEmitidos': 'N_Processo'
+                    }
+                    id_field = id_field_map.get(table_name)
+                    for row in data_to_insert:
+                        pg_cursor.execute(insert_sql, row)
+                        rows_count += 1
+                        identifier_val = None
+                        if id_field and id_field in sql_names:
+                            try:
+                                identifier_val = row[sql_names.index(id_field)]
+                            except Exception:
+                                identifier_val = None
+                        print(f"   -> Inserido/Atualizado em {table_name}: {id_field}={identifier_val}")
+                    print(f" [SUCESSO] Inseridas/Atualizadas {rows_count} linhas em \"{table_name}\"")
+
+            # fim processamento por tabelas do lote atual
+            pg_conn.commit()
+            total_processed += len(batch_docs)
+            last_id = batch_docs[-1]['_id']  # como está ordenado desc, o último é o menor _id do lote
+
+        print(f"\n[INFO] Processamento paginado concluído. Total de documentos processados: {total_processed}")
 
         pg_conn.commit()
 
