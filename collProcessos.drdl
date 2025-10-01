@@ -73,6 +73,10 @@ schema:
       MongoType: string
       SqlName: Nome
       SqlType: varchar
+    - Name: procAdministrativo.dadosGerais.dataInicio
+      MongoType: string
+      SqlName: Data_Inicio
+      SqlType: varchar
   - table: collProcessos360_lstTitulosEmitidos
     collection: collProcessos360
     pipeline:
