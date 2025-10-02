@@ -19,7 +19,7 @@ DRDL_FILE_PATH = "collProcessos.drdl"
 POSTGRES_CONFIG = {
     "host": "10.101.161.10",
     "port": "5432",
-    "database": "postgres",  # Base de dados que você criou
+    "database": "analitica_urbanismo",  # Base de dados que você criou
     "user": "dsiapps",
     "password": "a3nZX+e^?DMAKS^hyp",          # Sua senha do PostgreSQL
     "options": "-c search_path=public"
