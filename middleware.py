@@ -17,11 +17,11 @@ DRDL_FILE_PATH = "collProcessos.drdl"
 
 # --- Conexão PostgreSQL ---
 POSTGRES_CONFIG = {
-    "host": "localhost",
+    "host": "10.101.161.10",
     "port": "5432",
-    "database": "meu_middleware_db",  # Base de dados que você criou
-    "user": "postgres",
-    "password": "123456Ab",          # Sua senha do PostgreSQL
+    "database": "postgres",  # Base de dados que você criou
+    "user": "dsiapps",
+    "password": "a3nZX+e^?DMAKS^hyp",          # Sua senha do PostgreSQL
     "options": "-c search_path=public"
 }
 
@@ -32,6 +32,15 @@ MONGO_CONFIG = {
     "database": "dbProcessos",
     "collection": "collProcessos360"
 }
+
+# =================================================================
+#                         LOGGING
+# =================================================================
+
+def log_error(message):
+    """Logs an error message to a file."""
+    with open("error_log.txt", "a") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
 
 # =================================================================
 #                      PARTE 1: CRIAÇÃO DO ESQUEMA
@@ -112,13 +121,17 @@ def create_postgres_schema(drdl_data):
                     cursor.execute(create_table_command)
                     print(f" [OK] Tabela \"{table_name}\" criada/verificada.")
                 except Exception as e:
-                    print(f" [ERRO] Falha ao criar a tabela \"{table_name}\": {e}")
+                    error_message = f"Falha ao criar a tabela \"{table_name}\"': {e}"
+                    print(f" [ERRO] {error_message}")
+                    log_error(error_message)
 
         print("\n--- Criação de esquema concluída. ---")
         return True
 
     except psycopg2.Error as e:
+        error_message = f"ERRO FATAL DE CONEXÃO PG: {e}"
         print(f"\n[ERRO FATAL DE CONEXÃO PG]: {e}")
+        log_error(error_message)
         return False
     finally:
         if conn: conn.close()
@@ -332,7 +345,9 @@ def run_etl_process(drdl_data):
         pg_conn.commit()
 
     except Exception as e:
+        error_message = f"ERRO DURANTE ETL: Falha no processamento. Erro: {e}"
         print(f"\n[ERRO DURANTE ETL]: Falha no processamento. Fazendo ROLLBACK. Erro: {e}")
+        log_error(error_message)
         if pg_conn: pg_conn.rollback()
 
     finally:
@@ -351,7 +366,9 @@ def start_scheduler():
     try:
         drdl_data = load_drdl(DRDL_FILE_PATH)
     except Exception as e:
-        print(f"Não foi possível carregar o DRDL. O agendador não pode iniciar. Erro: {e}")
+        error_message = f"Não foi possível carregar o DRDL. O agendador não pode iniciar. Erro: {e}"
+        print(error_message)
+        log_error(error_message)
         return
 
     schema_ready = create_postgres_schema(drdl_data)
