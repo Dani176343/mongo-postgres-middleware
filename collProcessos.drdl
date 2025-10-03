@@ -29,10 +29,6 @@ schema:
       MongoType: string
       SqlName: Localizacao_Processo
       SqlType: varchar
-    - Name: procAdministrativo.dadosGerais.num
-      MongoType: string
-      SqlName: procAdministrativo.dadosGerais.num
-      SqlType: varchar
     - Name: procAdministrativo.dadosGerais.pid
       MongoType: int
       SqlName: N_Processo
